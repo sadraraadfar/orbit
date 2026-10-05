@@ -1,0 +1,52 @@
+# Optional observability overlay.
+#
+#   docker compose -f docker-compose.yml -f deploy/docker-compose.observability.yml up -d
+#
+# It adds Jaeger (traces), Prometheus (metrics), and Grafana (dashboards), and
+# points every service at the Jaeger OTLP endpoint.
+
+services:
+  order-api:
+    environment:
+      ORBIT_OTLP_ENDPOINT: jaeger:4317
+  inventory-service:
+    environment:
+      ORBIT_OTLP_ENDPOINT: jaeger:4317
+  payment-service:
+    environment:
+      ORBIT_OTLP_ENDPOINT: jaeger:4317
+  fulfillment-service:
+    environment:
+      ORBIT_OTLP_ENDPOINT: jaeger:4317
+  notification-service:
+    environment:
+      ORBIT_OTLP_ENDPOINT: jaeger:4317
+
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "16686:16686"
+      - "4317:4317"
+      - "4318:4318"
+
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    ports:
+      - "9090:9090"
+
+  grafana:
+    image: grafana/grafana:11.2.0
+    environment:
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+    volumes:
+      - ./deploy/grafana/provisioning:/etc/grafana/provisioning:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - jaeger

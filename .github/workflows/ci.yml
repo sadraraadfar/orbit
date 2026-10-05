@@ -1,0 +1,75 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify modules
+        run: go mod download
+      - name: Format check
+        run: make fmt-check
+      - name: Vet
+        run: go vet ./...
+      - name: Unit tests
+        run: go test -race -count=1 ./...
+
+  integration:
+    runs-on: ubuntu-latest
+    needs: build-test
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: orbit
+          POSTGRES_PASSWORD: orbit
+          POSTGRES_DB: orbit
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U orbit"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Start Redpanda
+        run: |
+          docker run -d --name redpanda -p 9092:9092 \
+            redpandadata/redpanda:v24.2.7 \
+            redpanda start --smp=1 --memory=512M --reserve-memory=0M \
+            --overprovisioned --node-id=0 --check=false \
+            --kafka-addr=PLAINTEXT://0.0.0.0:9092 \
+            --advertise-kafka-addr=PLAINTEXT://127.0.0.1:9092 \
+            --set redpanda.auto_create_topics_enabled=true
+          for i in $(seq 1 60); do
+            if docker exec redpanda rpk cluster health 2>/dev/null | grep -q 'Healthy:.*true'; then
+              echo "redpanda ready"; exit 0
+            fi
+            sleep 2
+          done
+          echo "redpanda did not become ready"; docker logs redpanda; exit 1
+
+      - name: Integration and end-to-end tests
+        env:
+          ORBIT_TEST_INTEGRATION: "1"
+          ORBIT_TEST_PG_ADMIN_URL: postgres://orbit:orbit@localhost:5432/postgres?sslmode=disable
+          ORBIT_TEST_KAFKA_BROKERS: localhost:9092
+        run: go test -tags=integration -count=1 ./test/...

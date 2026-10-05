@@ -1,0 +1,290 @@
+openapi: 3.1.0
+info:
+  title: Orbit Order API
+  version: 1.0.0
+  description: >
+    HTTP API for creating and inspecting orders. Order creation supports the
+    Idempotency-Key header. All responses include X-Request-ID and
+    X-Correlation-ID headers.
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/orders:
+    post:
+      summary: Create an order
+      operationId: createOrder
+      parameters:
+        - in: header
+          name: Idempotency-Key
+          required: false
+          schema:
+            type: string
+            maxLength: 255
+          description: >
+            Repeating a request with the same key and body returns the original
+            order. Reusing a key with a different body returns 409.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateOrderRequest"
+      responses:
+        "201":
+          description: Order accepted.
+          headers:
+            Location:
+              schema:
+                type: string
+            Idempotency-Replayed:
+              schema:
+                type: string
+                enum: ["true"]
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateOrderResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "500":
+          $ref: "#/components/responses/Internal"
+    get:
+      summary: List orders
+      operationId: listOrders
+      parameters:
+        - in: query
+          name: status
+          schema:
+            type: string
+        - in: query
+          name: customer_id
+          schema:
+            type: string
+        - in: query
+          name: limit
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+        - in: query
+          name: cursor
+          schema:
+            type: string
+        - in: query
+          name: sort
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: A page of orders.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListOrdersResponse"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+  /v1/orders/{id}:
+    get:
+      summary: Retrieve an order
+      operationId: getOrder
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "404":
+          $ref: "#/components/responses/NotFound"
+  /v1/orders/{id}/timeline:
+    get:
+      summary: Retrieve an order's distributed timeline
+      operationId: getOrderTimeline
+      parameters:
+        - $ref: "#/components/parameters/OrderId"
+      responses:
+        "200":
+          description: The ordered events observed for the order.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TimelineResponse"
+        "404":
+          $ref: "#/components/responses/NotFound"
+components:
+  parameters:
+    OrderId:
+      in: path
+      name: id
+      required: true
+      schema:
+        type: string
+        format: uuid
+  responses:
+    BadRequest:
+      description: Invalid request.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    NotFound:
+      description: Resource not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Conflict:
+      description: Conflict.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+    Internal:
+      description: Internal error.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorBody"
+  schemas:
+    CreateOrderRequest:
+      type: object
+      required: [customer_id, items, currency]
+      additionalProperties: false
+      properties:
+        customer_id:
+          type: string
+        currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        items:
+          type: array
+          minItems: 1
+          items:
+            $ref: "#/components/schemas/CreateOrderItem"
+        faults:
+          type: object
+          additionalProperties:
+            type: string
+          description: >
+            Development-only failure injection. Rejected unless fault injection
+            is enabled on the deployment.
+    CreateOrderItem:
+      type: object
+      required: [sku, quantity, unit_price_cents]
+      additionalProperties: false
+      properties:
+        sku:
+          type: string
+        quantity:
+          type: integer
+          minimum: 1
+        unit_price_cents:
+          type: integer
+          minimum: 0
+    CreateOrderResponse:
+      type: object
+      properties:
+        order:
+          $ref: "#/components/schemas/Order"
+        correlation_id:
+          type: string
+        idempotency_replayed:
+          type: boolean
+    Order:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        customer_id:
+          type: string
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/CreateOrderItem"
+        total_cents:
+          type: integer
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [pending, inventory_reserved, payment_authorized, fulfillment_started, completed, cancelling, cancelled]
+        cancel_stage:
+          type: string
+        cancel_reason:
+          type: string
+        inventory_released:
+          type: boolean
+        payment_refunded:
+          type: boolean
+        correlation_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    ListOrdersResponse:
+      type: object
+      properties:
+        orders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        next_cursor:
+          type: string
+    TimelineResponse:
+      type: object
+      properties:
+        order_id:
+          type: string
+          format: uuid
+        entries:
+          type: array
+          items:
+            $ref: "#/components/schemas/TimelineEntry"
+    TimelineEntry:
+      type: object
+      properties:
+        event_id:
+          type: string
+          format: uuid
+        event_type:
+          type: string
+        occurred_at:
+          type: string
+          format: date-time
+        recorded_at:
+          type: string
+          format: date-time
+        correlation_id:
+          type: string
+        causation_id:
+          type: string
+        summary:
+          type: object
+          additionalProperties: true
+    ErrorBody:
+      type: object
+      properties:
+        error:
+          type: object
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+            request_id:
+              type: string
+            details:
+              type: object
+              additionalProperties: true

@@ -1,0 +1,16 @@
+# Binaries
+/bin/
+orbit
+orbitctl
+
+# Local environment
+.env
+
+# Test and coverage output
+*.out
+coverage.html
+
+# Editor/OS noise
+.DS_Store
+.idea/
+.vscode/
